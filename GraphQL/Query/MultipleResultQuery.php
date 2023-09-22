@@ -13,35 +13,46 @@
 
 namespace Plugin\Api42\GraphQL\Query;
 
+use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
+use Eccube\Entity\Cart;
+use Eccube\Security\SecurityContext;
+use Eccube\Service\CartService;
 use GraphQL\Type\Definition\Type;
-use Plugin\Api42\GraphQL\Error\ItemNotFoundException;
 use Plugin\Api42\GraphQL\Query;
+use Plugin\Api42\GraphQL\Type\ConnectionType;
 use Plugin\Api42\GraphQL\Types;
 
-abstract class SingleResultQuery implements Query
+abstract class MultipleResultQuery implements Query
 {
     /**
      * @var string
      */
-    private string $entityClass;
+    protected $entityClass;
 
     /**
      * @var Types
      */
-    private Types $types;
+    private $types;
 
     /**
-     * @var EntityManagerInterface
+     * @var EntityManager
      */
-    private EntityManagerInterface $entityManager;
+    protected $entityManager;
+
+    protected $resolver;
+
+    protected SecurityContext $securityContext;
+    private CartService $cartService;
 
     /**
      * SingleResultQuery constructor.
      */
-    public function __construct($entityClass)
+    public function __construct($entityClass, SecurityContext $securityContext, CartService $cartService)
     {
         $this->entityClass = $entityClass;
+        $this->securityContext = $securityContext;
+        $this->cartService = $cartService;
     }
 
     /**
@@ -64,19 +75,17 @@ abstract class SingleResultQuery implements Query
         $this->types = $types;
     }
 
-    /**
-     * @return array
-     */
+    abstract public function getArgs(): ?array;
+
+    abstract public function runResolver($root, $args);
+
     public function getQuery(): array
     {
         return [
-            'type' => $this->types->get($this->entityClass),
-            'args' => [
-                'id' => Type::nonNull(Type::id()),
-            ],
+            'type' => Type::listOf($this->types->get($this->entityClass)),
+            'args' => $this->getArgs(),
             'resolve' => function ($root, $args) {
-                return $this->entityManager->getRepository($this->entityClass)->find($args['id']) === null ?
-                    throw new ItemNotFoundException(message: "$this->entityClass not found") : $this->entityManager->getRepository($this->entityClass)->find($args['id']);
+                return $this->runResolver($root, $args);
             },
         ];
     }

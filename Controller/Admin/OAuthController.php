@@ -16,12 +16,6 @@ namespace Plugin\Api42\Controller\Admin;
 use Eccube\Controller\AbstractController;
 use Eccube\Form\Form;
 use Exception;
-use Plugin\Api42\Form\Type\Admin\ClientType;
-use Sensio\Bundle\FrameworkExtraBundle\Configuration\Template;
-use Symfony\Component\Form\FormInterface;
-use Symfony\Component\HttpFoundation\RedirectResponse;
-use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\Routing\Annotation\Route;
 use League\Bundle\OAuth2ServerBundle\Manager\AccessTokenManagerInterface;
 use League\Bundle\OAuth2ServerBundle\Manager\ClientFilter;
 use League\Bundle\OAuth2ServerBundle\Manager\ClientManagerInterface;
@@ -32,6 +26,11 @@ use League\Bundle\OAuth2ServerBundle\Model\Grant;
 use League\Bundle\OAuth2ServerBundle\Model\RedirectUri;
 use League\Bundle\OAuth2ServerBundle\Model\Scope;
 use League\Bundle\OAuth2ServerBundle\OAuth2Grants;
+use Plugin\Api42\Form\Type\Admin\ClientType;
+use Sensio\Bundle\FrameworkExtraBundle\Configuration\Template;
+use Symfony\Component\HttpFoundation\RedirectResponse;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\Routing\Annotation\Route;
 
 class OAuthController extends AbstractController
 {
@@ -194,7 +193,7 @@ class OAuthController extends AbstractController
 
     /**
      * @param Client $client
-     * @param FormInterface $form
+     * @param Form $form
      *
      * @return Client
      */
@@ -216,10 +215,8 @@ class OAuthController extends AbstractController
             },
             $form->get('grants')->getData()
         );
-        // authorization code grant が選択されていた場合には refresh token grant も付与
-        if (in_array(OAuth2Grants::AUTHORIZATION_CODE, $grants)) {
-            array_push($grants, new Grant(OAuth2Grants::REFRESH_TOKEN));
-        }
+        array_push($grants, new Grant(OAuth2Grants::REFRESH_TOKEN)); // RefreshToken は常に利用可能
+
         $client->setGrants(...$grants);
 
         $scopes = array_map(

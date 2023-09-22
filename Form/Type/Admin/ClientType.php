@@ -14,13 +14,15 @@
 namespace Plugin\Api42\Form\Type\Admin;
 
 use Eccube\Common\EccubeConfig;
-use Exception;
-use Symfony\Component\Form\AbstractType;
+use Eccube\Form\FormBuilder;
+use Eccube\Form\FormError;
+use Eccube\Form\FormEvent;
+use Eccube\Form\Type\AbstractType;
+use Eccube\Validator\Constraints as Assert;
+use League\Bundle\OAuth2ServerBundle\OAuth2Grants;
+use Plugin\Api42\Service\ScopeManager;
 use Symfony\Component\Form\Extension\Core\Type\ChoiceType;
 use Symfony\Component\Form\Extension\Core\Type\TextType;
-use Symfony\Component\Form\FormBuilderInterface;
-use Symfony\Component\Validator\Constraints as Assert;
-use League\Bundle\OAuth2ServerBundle\OAuth2Grants;
 
 class ClientType extends AbstractType
 {
@@ -29,24 +31,34 @@ class ClientType extends AbstractType
      */
     protected $eccubeConfig;
 
+    private ScopeManager $scopeManager;
+
     /**
      * ClientType constructor.
      *
      * @param EccubeConfig $eccubeConfig
      */
     public function __construct(
-        EccubeConfig $eccubeConfig
+        EccubeConfig $eccubeConfig,
+        ScopeManager $scopeManager
     ) {
         $this->eccubeConfig = $eccubeConfig;
+        $this->scopeManager = $scopeManager;
     }
 
     /**
      * {@inheritdoc}
      *
-     * @throws Exception
+     * @throws \Exception
      */
-    public function buildForm(FormBuilderInterface $builder, array $options)
+    public function buildForm(FormBuilder $builder, array $options)
     {
+        $scopes = array_reduce($this->scopeManager->getScopes(), function ($acc, $val) {
+            $scope = (string) $val;
+            $acc[$scope] = $scope;
+            return $acc;
+        }, []);
+
         $builder
             ->add('identifier', TextType::class, [
                 'mapped' => false,
@@ -61,16 +73,12 @@ class ClientType extends AbstractType
                 'mapped' => false,
                 'data' => hash('sha512', random_bytes(32)),
                 'constraints' => [
-                    new Assert\NotBlank(),
                     new Assert\Length(['max' => 128]),
                     new Assert\Regex(['pattern' => '/^[0-9a-zA-Z]+$/']),
                 ],
             ])
             ->add('scopes', ChoiceType::class, [
-                'choices'  => [
-                    'read' => 'read',
-                    'write' => 'write',
-                ],
+                'choices' => $scopes,
                 'expanded' => true,
                 'multiple' => true,
                 'mapped' => false,
@@ -87,8 +95,9 @@ class ClientType extends AbstractType
                 ],
             ])
             ->add('grants', ChoiceType::class, [
-                'choices'  => [
+                'choices' => [
                     'Authorization code' => OAuth2Grants::AUTHORIZATION_CODE,
+                    'Password' => OAuth2Grants::PASSWORD,
                 ],
                 'expanded' => true,
                 'multiple' => true,
@@ -98,6 +107,18 @@ class ClientType extends AbstractType
                     new Assert\NotBlank(),
                 ],
             ]);
+
+        $builder->onPostSubmit(function (FormEvent $event) {
+            $form = $event->getForm();
+            $grants = $form['grants']->getData();
+            $secret = $form['secret']->getData();
+
+            if (in_array(OAuth2Grants::AUTHORIZATION_CODE, $grants) && empty($secret)) {
+                // ja: Authorization code grant を指定した場合は client_secret を入力してください。
+                // en: Please enter client_secret if you specify Authorization code grant.
+                $form['secret']->addError(new FormError(trans('api.admin.oauth.client_secret.required')));
+            }
+        });
     }
 
     /**

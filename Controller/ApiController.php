@@ -16,11 +16,17 @@ namespace Plugin\Api42\Controller;
 use Eccube\Controller\AbstractController;
 use Eccube\Http\JsonResponse;
 use Eccube\Http\Response;
+use Eccube\Security\SecurityContext;
 use GraphQL\Error\DebugFlag;
+use GraphQL\Error\Error;
 use GraphQL\GraphQL;
-use GraphQL\Validator\DocumentValidator;
+use League\Bundle\OAuth2ServerBundle\Manager\AccessTokenManagerInterface;
+use League\Bundle\OAuth2ServerBundle\Manager\RefreshTokenManagerInterface;
+use League\Bundle\OAuth2ServerBundle\Model\AccessToken;
+use League\Bundle\OAuth2ServerBundle\Model\RefreshToken;
+use League\Bundle\OAuth2ServerBundle\Repository\AccessTokenRepository;
+use League\Bundle\OAuth2ServerBundle\Repository\RefreshTokenRepository;
 use Plugin\Api42\GraphQL\Schema;
-use Plugin\Api42\GraphQL\ScopeValidationRule;
 use Plugin\Api42\GraphQL\Types;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\IsGranted;
 use Symfony\Component\HttpFoundation\Request;
@@ -43,22 +49,31 @@ class ApiController extends AbstractController
      * @var Schema
      */
     private $schema;
-
-    /**
-     * @var ScopeValidationRule
-     */
-    private $scopeValidationRule;
+    private SecurityContext $securityContext;
+    private RefreshTokenRepository $refreshTokenRepository;
+    private AccessTokenRepository $accessTokenRepository;
+    private RefreshTokenManagerInterface $refreshTokenManager;
+    private AccessTokenManagerInterface $accessTokenManager;
 
     public function __construct(
         Types $types,
         KernelInterface $kernel,
         Schema $schema,
-        ScopeValidationRule $scopeValidationRule
+        SecurityContext $securityContext,
+        RefreshTokenRepository $refreshTokenRepository,
+        AccessTokenRepository $accessTokenRepository,
+        RefreshTokenManagerInterface $refreshTokenManager,
+        AccessTokenManagerInterface $accessTokenManager
     ) {
         $this->types = $types;
         $this->kernel = $kernel;
         $this->schema = $schema;
-        $this->scopeValidationRule = $scopeValidationRule;
+        $this->securityContext = $securityContext;
+        $this->refreshTokenRepository = $refreshTokenRepository;
+
+        $this->accessTokenRepository = $accessTokenRepository;
+        $this->refreshTokenManager = $refreshTokenManager;
+        $this->accessTokenManager = $accessTokenManager;
     }
 
     /**
@@ -88,10 +103,20 @@ class ApiController extends AbstractController
                 throw new \RuntimeException();
         }
 
-        // FIXME 認証認可をいったん解除
-        // DocumentValidator::addRule($this->scopeValidationRule);
+        /** @var Error[] $warnings */
+        $warnings = [];
+        /** @var Error[] $infos */
+        $infos = [];
 
-        $result = GraphQL::executeQuery($this->schema, $query, null, null, $variableValues);
+        $result = GraphQL::executeQuery(
+            $this->schema, $query, null,
+            [
+                'warnings' => &$warnings,
+                'infos' => &$infos,
+            ],
+            $variableValues
+        );
+        $result->errors = array_merge($result->errors, $warnings, $infos);
 
         if ($this->kernel->isDebug()) {
             $debug = DebugFlag::INCLUDE_DEBUG_MESSAGE | DebugFlag::INCLUDE_TRACE;
@@ -105,5 +130,41 @@ class ApiController extends AbstractController
         $jsonResult->headers->set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 
         return $jsonResult;
+    }
+
+    /**
+     * ログアウトしてOAuth2のセッションを無効化する.
+     * @Route("/api/logout", name="api_logout", methods={"POST", "OPTIONS"})
+     */
+    public function logoutAndInvalidateOAuth2Session(): JsonResponse
+    {
+        $user = $this->securityContext->getLoginUser();
+        if ($user !== null) {
+            /** @var AccessToken[]|null $tokenList */
+            $tokenList = $this->entityManager->getRepository(AccessToken::class)->findBy(['userIdentifier' => $user->getUsername()]);
+            foreach ($tokenList as $tokenRow) {
+                $refreshTokenList = $this->entityManager->getRepository(RefreshToken::class)->findBy(['accessToken' => $tokenRow->getIdentifier()]);
+                foreach ($refreshTokenList as $refreshTokenRow) {
+                    // ユーザーのリフレッシュトークンを削除
+                    $this->refreshTokenRepository->revokeRefreshToken($refreshTokenRow->getIdentifier());
+                    $this->entityManager->flush();
+                }
+
+                // ユーザーのアクセストークンを削除
+                $this->accessTokenRepository->revokeAccessToken($tokenRow->getIdentifier());
+                $this->entityManager->flush();
+            }
+        } else {
+            log_alert('IGNORED, NO ACTIVE USER');
+        }
+
+        // 他の有効期限切れたトークンを削除
+        $this->accessTokenManager->clearExpired();
+        $this->refreshTokenManager->clearExpired();
+
+        $jsonResponse = new JsonResponse();
+        $jsonResponse->setContent(json_encode(['message' => 'success']));
+
+        return $jsonResponse;
     }
 }
