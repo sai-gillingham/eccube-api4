@@ -21,7 +21,7 @@ use League\OAuth2\Server\Repositories\ClientRepositoryInterface;
 use League\Bundle\OAuth2ServerBundle\Entity\AccessToken;
 use League\Bundle\OAuth2ServerBundle\Entity\Scope;
 use League\Bundle\OAuth2ServerBundle\Manager\Doctrine\ClientManager;
-use League\Bundle\OAuth2ServerBundle\Model\Client;
+use League\Bundle\OAuth2ServerBundle\Valueobject\Client;
 
 class ApiControllerTest extends AbstractWebTestCase
 {
